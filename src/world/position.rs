@@ -1,4 +1,3 @@
-use specs::Component;
 use std::ops::{Add, Div, Mul, Rem, Sub};
 
 use super::chunk::CHUNK_SIZE;
@@ -14,10 +13,6 @@ macro_rules! pos {
 pub struct Position {
     pub x: i32,
     pub y: i32,
-}
-
-impl Component for Position {
-    type Storage = specs::VecStorage<Self>;
 }
 
 impl Add for Position {

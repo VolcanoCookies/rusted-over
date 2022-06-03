@@ -1,10 +1,12 @@
+use emerald::Sprite;
+
 pub const TILE_SIZE: f32 = 16.0;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct Tile {
     pub blocked: bool,
     pub block_sight: bool,
-    pub char: char,
+    pub sprite: Sprite,
 }
 
 impl Tile {
@@ -12,15 +14,7 @@ impl Tile {
         Tile {
             blocked: false,
             block_sight: false,
-            char: ' ',
-        }
-    }
-
-    pub fn wall() -> Self {
-        Tile {
-            blocked: true,
-            block_sight: true,
-            char: '#',
+            sprite: Sprite::default(),
         }
     }
 }

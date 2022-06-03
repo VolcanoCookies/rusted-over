@@ -1,6 +1,5 @@
-use hashbrown::HashMap;
-
 use crate::pos;
+use std::collections::HashMap;
 
 use super::{
     chunk::{LoadedChunk, UnloadedChunk, CHUNK_SIZE},

@@ -24,8 +24,6 @@ impl GameObject {
 
     pub fn move_by(&mut self, dx: i32, dy: i32, level: &Level) {
         let d_loc = self.pos + pos!(dx, dy);
-        dbg!(d_loc);
-        dbg!(d_loc.tile_coords());
         let blocked = level
             .get_loaded_tile(d_loc)
             .and_then(|tile| Some(tile.blocked))
@@ -33,14 +31,6 @@ impl GameObject {
 
         if !blocked {
             self.pos = d_loc;
-        }
-    }
-
-    pub fn draw(&self, con: &mut dyn Console, game: &Game) {
-        if game.camera.in_view(&self.pos) {
-            let offset_pos = self.pos - game.camera.pos;
-            con.set_default_foreground(self.color);
-            con.put_char(offset_pos.x, offset_pos.y, self.char, BackgroundFlag::None);
         }
     }
 }

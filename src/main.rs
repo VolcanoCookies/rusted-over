@@ -1,12 +1,9 @@
-use emerald::{GameSettings, RenderSettings, World};
-use specs::{ReadStorage, System};
-use std::process;
+use emerald::nalgebra::Transform2;
+use emerald::tilemap::Tilemap;
+use emerald::{Emerald, Game, GameSettings, RenderSettings, Sprite, Transform, Vector2, World};
+use ggez::ContextBuilder;
 
 use objects::camera::Camera;
-use tcod::colors;
-use tcod::console::*;
-use tcod::input::Key;
-use tcod::input::KeyCode;
 
 pub mod objects;
 pub mod utils;
@@ -25,87 +22,67 @@ const SCREEN_HEIGHT: i32 = 50;
 
 const MAX_FPS: i32 = 20;
 
-pub struct Tcon {
-    root: Root,
-    con: Offscreen,
-}
-
-pub struct Game {
-    level: Level,
-    player: GameObject,
-    camera: Camera,
-}
-
 pub struct Rust {
     world: World,
     level: Level,
 }
 
-impl Game for Rust {}
+impl Rust {
+    pub fn new() -> Self {
+        let mut world = World::new();
+
+        let mut level = Level::new(rand::random::<i32>());
+        level.load_chunk(pos!(0, 0));
+
+        Rust { world, level }
+    }
+}
+
+impl Game for Rust {
+    fn initialize(&mut self, mut emd: Emerald) {
+        emd.set_asset_folder_root(String::from("./assets/"));
+        let texture_key = emd.loader().texture("atlas.png").unwrap();
+        let mut tilemap = Tilemap::new(texture_key, Vector2::new(16, 16), 4, 4);
+
+        let sprite = emd.loader().sprite("atlas.png").unwrap();
+        self.world.spawn((sprite, Transform::default()));
+    }
+
+    fn update(&mut self, mut emd: Emerald<'_, '_, '_>) {
+        for (_, (_, transform)) in self.world.query::<(&Sprite, &mut Transform)>().iter() {
+            transform.translation.x += 1.0;
+        }
+    }
+
+    fn draw(&mut self, mut emd: Emerald) {
+        emd.graphics().begin().unwrap();
+        emd.graphics().draw_world(&mut self.world).unwrap();
+        emd.graphics().render().unwrap();
+    }
+}
 
 pub const RES_WIDTH: f32 = 640.0;
 pub const RES_HEIGHT: f32 = 480.0;
 
 fn main() {
+    let (mut ctx, event_loop) = ContextBuilder::new("Rusted", "Volcano")
+        .build()
+        .expect("aieee");
+
+    let rust = Rust {
+
+    }
+
     let mut settings = GameSettings::default();
     let render_settings = RenderSettings {
         resolution: (RES_WIDTH as u32, RES_HEIGHT as u32),
         ..Default::default()
     };
     settings.render_settings = render_settings;
-
-    let root = Root::initializer()
-        .font("arial10x10.png", FontLayout::Tcod)
-        .font_type(FontType::Greyscale)
-        .size(SCREEN_WIDTH, SCREEN_HEIGHT)
-        .title("Rust")
-        .init();
-
-    let camera = Camera {
-        pos: pos!(0, 0),
-        width: SCREEN_WIDTH,
-        height: SCREEN_HEIGHT,
-    };
-
-    let con = Offscreen::new(SCREEN_WIDTH, SCREEN_HEIGHT);
-    let mut tcon = Tcon { root, con };
-
-    let mut level = Level::new(rand::random::<i32>());
-    level.load_chunk(pos!(0, 0));
-    let player = GameObject::new(0, 0, '@', colors::DARK_AMBER);
-
-    let mut game = Game {
-        level,
-        player,
-        camera,
-    };
-
-    {
-        // Render the initial state
-        tcon.con.set_default_background(colors::BLACK);
-        // Clear previous frame
-        tcon.con.clear();
-        tcon.root.clear();
-
-        tick(&mut game);
-        render(&mut tcon, &game);
-        tcon.root.flush();
-    }
-
-    while !tcon.root.window_closed() {
-        tcon.con.set_default_background(colors::BLACK);
-        // Clear previous frame
-        tcon.con.clear();
-        tcon.root.clear();
-
-        handle_keys(&mut tcon, &mut game);
-        tick(&mut game);
-        render(&mut tcon, &game);
-
-        tcon.root.flush();
-    }
+    emerald::start(Box::new(Rust::new()), settings);
 }
 
+/*
 fn tick(game: &mut Game) {
     let player_chunk_pos = game.player.pos.chunk_coords();
     let mut to_unload = Vec::<Position>::new();
@@ -195,3 +172,4 @@ fn handle_keys(tcon: &mut Tcon, game: &mut Game) -> bool {
     game.camera.pos = player.pos.clone() - pos!(SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2);
     false
 }
+*/
