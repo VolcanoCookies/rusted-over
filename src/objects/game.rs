@@ -1,10 +1,25 @@
-use tcod::{BackgroundFlag, Color, Console};
+use ggez::event::KeyCode;
+use ggez::graphics::Color;
+use ggez::input::keyboard::is_key_pressed;
+use ggez::{input, Context};
 
 use crate::{
     pos,
     world::{level::Level, position::Position},
-    Game,
+    Camera, SpriteAtlas, TilePosition,
 };
+
+trait Entity {
+    fn get_pos(&self) -> Position;
+    fn set_pos(&mut self, pos: Position);
+
+    fn render(&self, atlas: &mut SpriteAtlas, camera: &Camera);
+    fn update(&mut self, ctx: &Context, dt: f32);
+}
+
+pub struct Player {
+    pos: Position,
+}
 
 #[derive(Debug, Copy, Clone)]
 pub struct GameObject {

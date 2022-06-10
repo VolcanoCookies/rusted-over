@@ -1,175 +1,291 @@
-use emerald::nalgebra::Transform2;
-use emerald::tilemap::Tilemap;
-use emerald::{Emerald, Game, GameSettings, RenderSettings, Sprite, Transform, Vector2, World};
-use ggez::ContextBuilder;
+extern crate alloc;
+extern crate core;
+use std::time::Instant;
+use std::{env, path};
+
+use ggez::event::{Button, ErrorOrigin, EventHandler, GamepadId, KeyCode, KeyMods, MouseButton};
+use ggez::graphics::{Color, DrawParam, FilterMode, Rect, Text};
+use ggez::input::keyboard::is_key_pressed;
+use ggez::mint::Point2;
+use ggez::{event, graphics, timer, Context, ContextBuilder, GameResult};
+use specs::{Dispatcher, DispatcherBuilder, World, WorldExt};
 
 use objects::camera::Camera;
-
-pub mod objects;
-pub mod utils;
-pub mod world;
-
-use crate::objects::sprite::EntitySprite;
-use crate::world::tile::TILE_SIZE;
-use objects::game::GameObject;
-use world::chunk::CHUNK_SIZE;
 use world::level::Level;
 use world::position::Position;
-use world::position::DIRECTIONS;
+
+use crate::objects::entities::Entities;
+use crate::objects::sprite_atlas::SpriteAtlas;
+use crate::systems::ai_system::AiSystem;
+use crate::systems::chunk_system::{ChunkLoader, ChunkSystem};
+use crate::systems::control_system::{Control, ControlSystem, Keyboard};
+use crate::systems::movement_system::{Movement, MovementSystem};
+use crate::systems::render_system::RenderSystem;
+use crate::world::chunk::Chunk;
+use crate::world::position::{ChunkPosition, TilePosition, WorldPosition};
+use crate::world::tile::Tile;
+
+pub mod gui;
+pub mod objects;
+pub mod systems;
+pub mod utils;
+pub mod world;
 
 const SCREEN_WIDTH: i32 = 80;
 const SCREEN_HEIGHT: i32 = 50;
 
+pub const RES_WIDTH: f32 = 640.0;
+pub const RES_HEIGHT: f32 = 480.0;
+
 const MAX_FPS: i32 = 20;
 
-pub struct Rust {
-    world: World,
-    level: Level,
+struct Player {
+    pos: Position,
 }
 
-impl Rust {
-    pub fn new() -> Self {
+pub struct Rusted {
+    world: World,
+    camera: Camera,
+    atlas: SpriteAtlas,
+    player: Player,
+    dispatcher: Dispatcher<'static, 'static>,
+}
+
+impl Rusted {
+    pub fn new(ctx: &mut Context) -> Self {
         let mut world = World::new();
 
         let mut level = Level::new(rand::random::<i32>());
         level.load_chunk(pos!(0, 0));
 
-        Rust { world, level }
+        let camera = Camera {
+            pos: Position { x: 0, y: 0 },
+            zoom: 1.0,
+            width: RES_WIDTH as i32,
+            height: RES_HEIGHT as i32,
+        };
+
+        let atlas = SpriteAtlas::new(ctx, "/atlas.png", 32);
+
+        let atlas_resource = SpriteAtlas::new(ctx, "/atlas.png", 32);
+        let camera_resource = Camera {
+            pos: Position { x: 0, y: 0 },
+            zoom: 1.0,
+            width: RES_WIDTH as i32,
+            height: RES_HEIGHT as i32,
+        };
+
+        world.insert(level);
+        world.insert(Keyboard::default());
+        world.insert(atlas_resource);
+        world.insert(camera_resource);
+
+        let mut dispatcher = DispatcherBuilder::new()
+            .with(ControlSystem, "control", &[])
+            .with(AiSystem, "ai", &[])
+            .with(MovementSystem, "movement", &["control", "ai"])
+            .with(ChunkSystem, "chunk", &[])
+            .with_thread_local(RenderSystem)
+            .build();
+
+        dispatcher.setup(&mut world);
+
+        // Spawn Player
+        Entities::create_player(&mut world);
+        Entities::create_ai(&mut world);
+
+        Rusted {
+            world,
+            camera,
+            atlas,
+            player: Player {
+                pos: Position { x: 0, y: 0 },
+            },
+            dispatcher,
+        }
     }
 }
 
-impl Game for Rust {
-    fn initialize(&mut self, mut emd: Emerald) {
-        emd.set_asset_folder_root(String::from("./assets/"));
-        let texture_key = emd.loader().texture("atlas.png").unwrap();
-        let mut tilemap = Tilemap::new(texture_key, Vector2::new(16, 16), 4, 4);
+impl EventHandler for Rusted {
+    fn update(&mut self, ctx: &mut Context) -> GameResult {
+        const DESIRED_FPS: u32 = 60;
 
-        let sprite = emd.loader().sprite("atlas.png").unwrap();
-        self.world.spawn((sprite, Transform::default()));
+        while timer::check_update_time(ctx, DESIRED_FPS) {
+            let pressed_keys = ggez::input::keyboard::pressed_keys(ctx);
+            let active_mods = ggez::input::keyboard::active_mods(ctx);
+
+            {
+                let mut world = &self.world;
+                let mut keyboard = world.write_resource::<Keyboard>();
+                *keyboard = Keyboard {
+                    pressed_keys: pressed_keys.clone(),
+                    active_mods,
+                };
+            }
+
+            {
+                self.dispatcher.dispatch(&mut self.world);
+                self.world.maintain();
+            }
+
+            if is_key_pressed(ctx, KeyCode::W) && is_key_pressed(ctx, KeyCode::LControl) {
+                ctx.continuing = false;
+            }
+
+            {
+                graphics::clear(
+                    ctx,
+                    Color::new(10.0 / 256.0, 34.0 / 256.0, 34.0 / 256.0, 1.0),
+                );
+
+                let world = &mut self.world;
+                let mut world_atlas = world.write_resource::<SpriteAtlas>();
+                world_atlas.draw(ctx)?;
+
+                let camera = world.read_resource::<Camera>();
+                let level = world.read_resource::<Level>();
+
+                let mb = &mut graphics::MeshBuilder::new();
+
+                let factor = Chunk::SIZE as f32 * Tile::SIZE * camera.zoom;
+                mb.line(
+                    &[[0.0, 0.0], [0.0, factor], [factor, factor], [factor, 0.0]],
+                    4.0,
+                    Color::RED,
+                )?;
+
+                let mesh = mb.build(ctx)?;
+
+                for chunk in level.loaded_chunks.values() {
+                    let screen_pos = ChunkPosition::to_screen(chunk.pos, &*camera);
+                    graphics::draw(
+                        ctx,
+                        &mesh,
+                        DrawParam::default().dest([
+                            screen_pos.x as f32 * camera.zoom,
+                            screen_pos.y as f32 * camera.zoom,
+                        ]),
+                    )?;
+                }
+
+                // Render fps
+                let fps = timer::fps(ctx) as i32;
+                let mut text = Text::new(format!("FPS: {}", fps));
+                let player_pos = camera.pos + pos!(camera.width / 2, camera.height / 2);
+                let center_screen_chunk = WorldPosition::to_chunk(player_pos);
+                text.add(format!(
+                    "\nChunk pos: {}  {}",
+                    center_screen_chunk.x, center_screen_chunk.y
+                ));
+                text.add(format!("\nLoaded chunks: {}", level.loaded_chunks.len()));
+                text.add(format!("\nZoom: {}", camera.zoom));
+                graphics::draw(ctx, &text, DrawParam::default());
+
+                graphics::present(ctx)?;
+            }
+        }
+
+        Ok(())
     }
 
-    fn update(&mut self, mut emd: Emerald<'_, '_, '_>) {
-        for (_, (_, transform)) in self.world.query::<(&Sprite, &mut Transform)>().iter() {
-            transform.translation.x += 1.0;
+    fn resize_event(&mut self, ctx: &mut Context, width: f32, height: f32) {
+        let mut camera = self.world.write_resource::<Camera>();
+        println!("Resize event: {}x{}", camera.width, camera.height);
+        camera.width = width as i32;
+        camera.height = height as i32;
+
+        graphics::set_screen_coordinates(ctx, Rect::new(0.0, 0.0, width, height));
+    }
+
+    fn mouse_wheel_event(&mut self, _ctx: &mut Context, dx: f32, dy: f32) {
+        let mut camera = self.world.write_resource::<Camera>();
+        if dy == 1.0 {
+            camera.zoom += 0.1;
+        } else if dy == -1.0 {
+            camera.zoom += -0.1;
         }
     }
 
-    fn draw(&mut self, mut emd: Emerald) {
-        emd.graphics().begin().unwrap();
-        emd.graphics().draw_world(&mut self.world).unwrap();
-        emd.graphics().render().unwrap();
+    fn draw(&mut self, ctx: &mut Context) -> GameResult {
+        return Ok(());
+
+        /*
+        let atlas = &mut self.atlas;
+        let level = &mut self.level;
+        let camera = &self.camera;
+
+        // Clear previous frame
+        atlas.clear();
+        graphics::clear(ctx, Color::BLACK);
+
+        // Render level
+        level.render(atlas, camera)?;
+
+        // Render player
+        self.player.render(ctx, atlas, camera)?;
+
+        self.atlas.draw(ctx)?;
+
+        let mb = &mut graphics::MeshBuilder::new();
+
+        let factor = Chunk::SIZE as f32 * Tile::SIZE * camera.zoom;
+        mb.line(
+            &[[0.0, 0.0], [0.0, factor], [factor, factor], [factor, 0.0]],
+            4.0,
+            Color::RED,
+        )?;
+
+        let mesh = mb.build(ctx)?;
+
+        for chunk in level.loaded_chunks.values() {
+            let screen_pos = ChunkPosition::to_screen(chunk.pos, camera);
+            graphics::draw(
+                ctx,
+                &mesh,
+                DrawParam::default().dest([screen_pos.x as f32, screen_pos.y as f32]),
+            )?;
+        }
+
+        // Render fps
+        let fps = timer::fps(ctx) as i32;
+        let mut text = Text::new(format!("FPS: {}", fps));
+        let player_chunk_pos = TilePosition::to_chunk(self.player.pos);
+        text.add(format!(
+            "\nChunk pos: {}  {}",
+            player_chunk_pos.x, player_chunk_pos.y
+        ));
+        graphics::draw(ctx, &text, DrawParam::default());
+
+        graphics::present(ctx)?;
+        Ok(())
+        */
     }
 }
-
-pub const RES_WIDTH: f32 = 640.0;
-pub const RES_HEIGHT: f32 = 480.0;
 
 fn main() {
-    let (mut ctx, event_loop) = ContextBuilder::new("Rusted", "Volcano")
+    let mut context_builder = ContextBuilder::new("Rusted", "Volcano")
+        .window_setup(ggez::conf::WindowSetup::default().title("Rusty"))
+        .window_mode(
+            ggez::conf::WindowMode::default()
+                .dimensions(RES_WIDTH, RES_HEIGHT)
+                .resizable(true),
+        );
+
+    if let Ok(manifest_dir) = env::var("CARGO_MANIFEST_DIR") {
+        let mut path = path::PathBuf::from(manifest_dir);
+        path.push("assets");
+        println!("Adding path {:?}", path);
+        context_builder = context_builder.add_resource_path(path);
+    }
+
+    let (mut ctx, event_loop) = context_builder
         .build()
-        .expect("aieee");
+        .expect("Failed to build ggez context");
 
-    let rust = Rust {
+    graphics::set_default_filter(&mut ctx, FilterMode::Nearest);
 
-    }
+    let rusted = Rusted::new(&mut ctx);
 
-    let mut settings = GameSettings::default();
-    let render_settings = RenderSettings {
-        resolution: (RES_WIDTH as u32, RES_HEIGHT as u32),
-        ..Default::default()
-    };
-    settings.render_settings = render_settings;
-    emerald::start(Box::new(Rust::new()), settings);
+    println!("{}", graphics::renderer_info(&ctx).unwrap());
+    event::run(ctx, event_loop, rusted);
 }
-
-/*
-fn tick(game: &mut Game) {
-    let player_chunk_pos = game.player.pos.chunk_coords();
-    let mut to_unload = Vec::<Position>::new();
-
-    for (chunk_pos, _) in &game.level.loaded_chunks {
-        if !chunk_pos.is_adjacent(player_chunk_pos) {
-            to_unload.push(chunk_pos.clone());
-        }
-    }
-
-    for dir in DIRECTIONS {
-        let chunk_pos = dir + player_chunk_pos;
-        if !game.level.is_loaded(&chunk_pos) {
-            game.level.load_chunk(chunk_pos);
-        }
-    }
-
-    for pos in to_unload {
-        game.level.unload_chunk(pos);
-    }
-}
-
-fn render(tcon: &mut Tcon, game: &Game) {
-    // Render map
-    tcon.con.set_default_foreground(colors::DARK_GREY);
-    for (_, loaded_chunk) in &game.level.loaded_chunks {
-        loaded_chunk.render(tcon, game);
-    }
-
-    // Render player
-    game.player.draw(&mut tcon.con, game);
-
-    // Blit to root console
-    blit(
-        &tcon.con,
-        (0, 0),
-        (SCREEN_WIDTH, SCREEN_HEIGHT),
-        &mut &tcon.root,
-        (0, 0),
-        1.0,
-        1.0,
-    );
-
-    // Render player coords
-    let x = format!("{}", game.player.pos.x);
-    let y = format!("{}", game.player.pos.y);
-
-    tcon.con.set_default_foreground(colors::WHITE);
-    for (i, c) in x.char_indices() {
-        tcon.root.put_char(i as i32, 0, c, BackgroundFlag::None)
-    }
-    for (i, c) in y.char_indices() {
-        tcon.root.put_char(i as i32, 1, c, BackgroundFlag::None)
-    }
-}
-
-fn handle_keys(tcon: &mut Tcon, game: &mut Game) -> bool {
-    let key = tcon.root.wait_for_keypress(true);
-
-    let player = &mut game.player;
-    let level = &game.level;
-
-    match key {
-        Key {
-            code: KeyCode::Up, ..
-        } => player.move_by(0, -1, level),
-        Key {
-            code: KeyCode::Down,
-            ..
-        } => player.move_by(0, 1, level),
-        Key {
-            code: KeyCode::Left,
-            ..
-        } => player.move_by(-1, 0, level),
-        Key {
-            code: KeyCode::Right,
-            ..
-        } => player.move_by(1, 0, level),
-        Key {
-            printable: 'w',
-            ctrl: true,
-            ..
-        } => process::exit(0),
-        _ => {}
-    }
-
-    game.camera.pos = player.pos.clone() - pos!(SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2);
-    false
-}
-*/
