@@ -101,6 +101,10 @@ impl LoadedChunk {
         return &self.tiles[x as usize][y as usize];
     }
 
+    pub fn get_tile_at(&self, tile_pos: Position) -> &Tile {
+        return self.get_tile(tile_pos.x, tile_pos.y);
+    }
+
     pub fn render(&self, atlas: &mut SpriteAtlas, camera: &Camera) -> GameResult {
         for x in 0..CHUNK_SIZE {
             for y in 0..CHUNK_SIZE {

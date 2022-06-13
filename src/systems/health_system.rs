@@ -1,4 +1,3 @@
-use specs::world::EntitiesRes;
 use specs::{
     Component, Entities, Entity, Join, LazyUpdate, Read, ReadStorage, System, World, WorldExt,
 };

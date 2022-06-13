@@ -68,7 +68,7 @@ impl Level {
         let chunk_option = self.unloaded_chunks.remove(&chunk_pos);
         let unloaded_chunk = chunk_option.unwrap_or(UnloadedChunk::generate(chunk_pos, self.seed));
 
-        let neighbours = self.get_chunk_neighbours(chunk_pos);
+        //let neighbours = self.get_chunk_neighbours(chunk_pos);
         let mut loaded_chunk = unloaded_chunk.load();
         //loaded_chunk.populate_neighbours(neighbours);
         self.loaded_chunks.insert(chunk_pos, loaded_chunk);
@@ -81,17 +81,21 @@ impl Level {
         let tile = loaded_chunk.get_tile(tile_chunk_pos.x, tile_chunk_pos.y);
         Some(tile)
     }
-
-    fn get_chunk_neighbours(
-        &self,
-        chunk_pos: Position,
-    ) -> DirectionalMap<Option<Arc<LoadedChunk>>> {
-        let mut dir_map = DirectionalMap::new(None);
-        for dir in DIRECTIONS {
-            let n_chunk = self.loaded_chunks.get(&(chunk_pos + dir));
-            dir_map.set(dir, n_chunk.map(|c| Arc::new(*c)));
+    /*
+        fn get_chunk_neighbours(
+            &self,
+            chunk_pos: Position,
+        ) -> DirectionalMap<Option<Arc<LoadedChunk>>> {
+            let mut dir_map = DirectionalMap::new(None);
+            for dir in DIRECTIONS {
+                let n_chunk = self.loaded_chunks.get(&(chunk_pos + dir));
+                dir_map.set(dir, n_chunk.map(|c| Arc::new(*c)));
+            }
+            dir_map
         }
-        dir_map
+    */
+    pub fn get_loaded_chunk(&self, chunk_pos: Position) -> Option<&LoadedChunk> {
+        return self.loaded_chunks.get(&chunk_pos);
     }
 
     pub fn render(&self, atlas: &mut SpriteAtlas, camera: &Camera) -> GameResult {

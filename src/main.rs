@@ -1,13 +1,13 @@
-extern crate alloc;
-extern crate core;
 use std::time::Instant;
 use std::{env, path};
 
-use ggez::event::{Button, ErrorOrigin, EventHandler, GamepadId, KeyCode, KeyMods, MouseButton};
+use ggez::event::{
+    Axis, Button, ErrorOrigin, EventHandler, GamepadId, KeyCode, KeyMods, MouseButton,
+};
 use ggez::graphics::{Color, DrawParam, FilterMode, Rect, Text};
-use ggez::input::keyboard::is_key_pressed;
+use ggez::input::keyboard::{is_key_pressed, pressed_keys};
 use ggez::mint::Point2;
-use ggez::{event, graphics, timer, Context, ContextBuilder, GameResult};
+use ggez::{event, graphics, timer, Context, ContextBuilder, GameError, GameResult};
 use specs::{Dispatcher, DispatcherBuilder, World, WorldExt};
 
 use objects::camera::Camera;
@@ -19,6 +19,7 @@ use crate::objects::sprite_atlas::SpriteAtlas;
 use crate::systems::ai_system::AiSystem;
 use crate::systems::chunk_system::{ChunkLoader, ChunkSystem};
 use crate::systems::control_system::{Control, ControlSystem, Keyboard};
+use crate::systems::health_system::HealthSystem;
 use crate::systems::movement_system::{Movement, MovementSystem};
 use crate::systems::render_system::RenderSystem;
 use crate::world::chunk::Chunk;
@@ -85,14 +86,19 @@ impl Rusted {
             .with(AiSystem, "ai", &[])
             .with(MovementSystem, "movement", &["control", "ai"])
             .with(ChunkSystem, "chunk", &[])
+            .with(HealthSystem, "health", &[])
             .with_thread_local(RenderSystem)
             .build();
 
         dispatcher.setup(&mut world);
 
         // Spawn Player
-        Entities::create_player(&mut world);
-        Entities::create_ai(&mut world);
+        let e = Entities::create_player(&mut world);
+        Entities::create_ai(&mut world, e);
+        Entities::create_ai(&mut world, e);
+        Entities::create_ai(&mut world, e);
+        Entities::create_ai(&mut world, e);
+        Entities::create_ai(&mut world, e);
 
         Rusted {
             world,
@@ -107,12 +113,101 @@ impl Rusted {
 }
 
 impl EventHandler for Rusted {
+    fn key_down_event(
+        &mut self,
+        ctx: &mut Context,
+        keycode: KeyCode,
+        keymods: KeyMods,
+        repeat: bool,
+    ) {
+        const MTP: u32 = 20;
+
+        while timer::check_update_time(ctx, MTP) {
+            let pressed_keys = ggez::input::keyboard::pressed_keys(ctx);
+            let active_mods = ggez::input::keyboard::active_mods(ctx);
+
+            ggez::input::keyboard::pressed_keys(ctx);
+
+            {
+                let mut world = &self.world;
+                let mut keyboard = world.write_resource::<Keyboard>();
+                *keyboard = Keyboard {
+                    pressed_keys: pressed_keys.clone(),
+                    active_mods,
+                };
+            }
+
+            {
+                self.dispatcher.dispatch(&mut self.world);
+                self.world.maintain();
+            }
+
+            if is_key_pressed(ctx, KeyCode::W) && is_key_pressed(ctx, KeyCode::LControl) {
+                ctx.continuing = false;
+            }
+
+            {
+                graphics::clear(
+                    ctx,
+                    Color::new(10.0 / 256.0, 34.0 / 256.0, 34.0 / 256.0, 1.0),
+                );
+
+                let world = &mut self.world;
+                let mut world_atlas = world.write_resource::<SpriteAtlas>();
+                world_atlas.draw(ctx);
+
+                let camera = world.read_resource::<Camera>();
+                let level = world.read_resource::<Level>();
+
+                let mb = &mut graphics::MeshBuilder::new();
+
+                let factor = Chunk::SIZE as f32 * Tile::SIZE * camera.zoom;
+                mb.line(
+                    &[[0.0, 0.0], [0.0, factor], [factor, factor], [factor, 0.0]],
+                    4.0,
+                    Color::RED,
+                );
+
+                let mesh = mb.build(ctx).unwrap();
+
+                for chunk in level.loaded_chunks.values() {
+                    let screen_pos = ChunkPosition::to_screen(chunk.pos, &*camera);
+                    graphics::draw(
+                        ctx,
+                        &mesh,
+                        DrawParam::default().dest([
+                            screen_pos.x as f32 * camera.zoom,
+                            screen_pos.y as f32 * camera.zoom,
+                        ]),
+                    );
+                }
+
+                // Render fps
+                let fps = timer::fps(ctx) as i32;
+                let mut text = Text::new(format!("FPS: {}", fps));
+                let player_pos = camera.pos + pos!(camera.width / 2, camera.height / 2);
+                let center_screen_chunk = WorldPosition::to_chunk(player_pos);
+                text.add(format!(
+                    "\nChunk pos: {}  {}",
+                    center_screen_chunk.x, center_screen_chunk.y
+                ));
+                text.add(format!("\nLoaded chunks: {}", level.loaded_chunks.len()));
+                text.add(format!("\nZoom: {}", camera.zoom));
+                graphics::draw(ctx, &text, DrawParam::default());
+
+                graphics::present(ctx);
+            }
+        }
+    }
+
     fn update(&mut self, ctx: &mut Context) -> GameResult {
         const DESIRED_FPS: u32 = 60;
 
         while timer::check_update_time(ctx, DESIRED_FPS) {
             let pressed_keys = ggez::input::keyboard::pressed_keys(ctx);
             let active_mods = ggez::input::keyboard::active_mods(ctx);
+
+            ggez::input::keyboard::pressed_keys(ctx);
 
             {
                 let mut world = &self.world;
